@@ -1,0 +1,54 @@
+A large challenge in applying standard manipulation and planning techniques to
+deformable object manipulation is that of tractable modelling. Deformable object 
+are often characterized by high-dimensional, continuous state-action spaces. Model-based 
+planning has yet to scale up to the task of efficient planning in this
+setting.
+
+Recent work have gained traction on this problem through the technique of 
+learning from demonstrations~\cite{Schulmanetal_ISRR2013,Schulmanetal_IROS2013}.
+These results are achieved through \emph{trajectory transfer}, where a demonstration
+trajectory is generalized to fit a new scenario. Trajectory transfer finds a non-rigid
+registration is found an example scene and the current scene and that is
+used to modify the demonstration trajectory so that it better fits the scene at hand.
+This method of transfer is model-free and obviates the need to plan in complicated
+and intractable models of deformable objects. Trajectory transfer has demonstrated 
+state-of-the-art performance for knot-tying and suturing.
+
+An important aspect of these strategies is the incorporation of multiple demonstrations
+into the process. By increasing the amount of instruction, it becomes possible to do more
+tasks. Additionally, demonstrations can take the form of steps in a task and can be
+order or recombined to further increase the set of possible successful manipulations.
+
+However, an important problem remains: how should we pick which trajectory to transfer
+from a library of options given an input scene? Incorrect selection may lead us
+to fail at a task which would otherwise be possible for the correct selection of 
+trajectories.
+
+Schulman et al. propose to use nearest-neighbors with registration cost (a measure of the goodness of 
+fit for the registration) as a similarity measure to solve this problem. In this paper,
+we consider the problem of effectively learning to pick the trajectory to generalize
+from experience.
+
+We frame this problem in terms of manifold learning with respect to the state space of our object.
+Given a manipulation task, $m$, and demonstration state-trajectory pair, $d, t$, there is region of state space, $S$, 
+such that $t$ will perform $m$ successfully when transferred to any $s \in S$. 
+In this framework, the nearest-neighbor selection rule represents $S$ with the singlton $d$ and chooses the 
+trajectory which minimizes distance to an known example from $S$. \dhm{This is pretty sloppy, and probably too
+detailed for the intro but I'm including it so we have it down on paper.} A natural way to extend this approach uses successful traces of trajectory transfer
+to draw new states from $S$.
+
+The contributions of this paper are as follows: {\bf(i)} we frame the problem of selecting a trajectory to transfer
+from a library as one of estimating distance to a manifold; {\bf(ii)} we propose a method for building a model-free
+representation of the manifold associated with a demonstration from successful traces of execution; {\bf(iii)} we show
+how this approach can be leveraged to improve finding correspondences with new scenes; {\bf(iv)} we demonstrate
+the effectiveness of this approach by showing an improvement of \dhm{Number here} over the nearest-neighbor selection
+strategy in a simulated knot-tying task.
+
+\dhm{We need a name}
+
+\dhm{Figures: illustration of segment tree; Graphs/Table showing performance of NN/No Correspondence/Best C-Forest; 
+     Graph showing performance of C-Forest as fn of number of training examples; Illustration of manifold idea}
+
+
+
+

@@ -42,5 +42,6 @@ junk
 fastmath
 *.wpr
 *.wpu
+*.pkl
 
 doc/_build

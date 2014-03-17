@@ -11,18 +11,58 @@ from rapprentice.colorize import colorize
 VERBOSE = False
 ENABLE_SLOW_TESTS = False
 
+
 def nan2zero(x):
     np.putmask(x, np.isnan(x), 0)
     return x
 
+
+def tps_apply_kernel(distmat, dim):
+    """
+    if d=2: 
+        k(r) = 4 * r^2 log(r)
+       d=3:
+        k(r) = -r
+            
+    import numpy as np, scipy.spatial.distance as ssd
+    x = np.random.rand(100,2)
+    d=ssd.squareform(ssd.pdist(x))
+    print np.clip(np.linalg.eigvalsh( 4 * d**2 * log(d+1e-9) ),0,inf).mean()
+    print np.clip(np.linalg.eigvalsh(-d),0,inf).mean()
+    
+    Note the actual coefficients (from http://www.geometrictools.com/Documentation/ThinPlateSplines.pdf)
+    d=2: 1/(8*sqrt(pi)) = 0.070523697943469535
+    d=3: gamma(-.5)/(16*pi**1.5) = -0.039284682964880184
+    """
+
+    if dim==2:       
+        return 4 * distmat**2 * np.log(distmat+1e-20)
+        
+    elif dim ==3:
+        return -distmat
+    else:
+        raise NotImplementedError
+    
+    
+def tps_kernel_matrix(x_na):
+    dim = x_na.shape[1]
+    distmat = ssd.squareform(ssd.pdist(x_na))
+    return tps_apply_kernel(distmat,dim)
+
+def tps_kernel_matrix2(x_na, y_ma):
+    dim = x_na.shape[1]
+    distmat = ssd.cdist(x_na, y_ma)
+    return tps_apply_kernel(distmat, dim)
+
 def tps_eval(x_ma, lin_ag, trans_g, w_ng, x_na):
-    K_mn = ssd.cdist(x_ma, x_na)
+    K_mn = tps_kernel_matrix2(x_ma, x_na)
     return np.dot(K_mn, w_ng) + np.dot(x_ma, lin_ag) + trans_g[None,:]
 
 def tps_grad(x_ma, lin_ag, _trans_g, w_ng, x_na):
     _N, D = x_na.shape
     M = x_ma.shape[0]
 
+    assert x_ma.shape[1] == 3
     dist_mn = ssd.cdist(x_ma, x_na,'euclidean')
 
     grad_mga = np.empty((M,D,D))
@@ -30,7 +70,7 @@ def tps_grad(x_ma, lin_ag, _trans_g, w_ng, x_na):
     lin_ga = lin_ag.T
     for a in xrange(D):
         diffa_mn = x_ma[:,a][:,None] - x_na[:,a][None,:]
-        grad_mga[:,:,a] = lin_ga[None,:,a] + np.dot(nan2zero(diffa_mn/dist_mn),w_ng)
+        grad_mga[:,:,a] = lin_ga[None,:,a] - np.dot(nan2zero(diffa_mn/dist_mn),w_ng)
     return grad_mga
     
 def tps_nr_grad(x_ma, lin_ag, _trans_g, w_ng, x_na, return_tuple = False):
@@ -40,16 +80,17 @@ def tps_nr_grad(x_ma, lin_ag, _trans_g, w_ng, x_na, return_tuple = False):
     N, D = x_na.shape
     M = x_ma.shape[0]
 
+    assert x_ma.shape[1] == 3
     dists_mn = ssd.cdist(x_ma, x_na,'euclidean')
     diffs_mna = x_ma[:,None,:] - x_na[None,:,:]
 
     grad_mga = np.empty((M,D,D))
     lin_ga = lin_ag.T
     for a in xrange(D):
-        grad_mga[:,:,a] = lin_ga[None,:,a] + np.dot(nan2zero(diffs_mna[:,:,a]/dists_mn),w_ng)
+        grad_mga[:,:,a] = lin_ga[None,:,a] - np.dot(nan2zero(diffs_mna[:,:,a]/dists_mn),w_ng)
 
     # m n g a b
-    Jw_mngab = (nan2zero(diffs_mna[:,:,None,:,None]/dists_mn[:,:,None,None,None])) * grad_mga[:,None,:,None,:]
+    Jw_mngab = - (nan2zero(diffs_mna[:,:,None,:,None]/dists_mn[:,:,None,None,None])) * grad_mga[:,None,:,None,:]
     Jw_mngab = Jw_mngab + Jw_mngab.transpose(0,1,2,4,3)        
     Jw_mabng = Jw_mngab.transpose(0,3,4,1,2)
     Jw = Jw_mabng.reshape(M*D**2,N*D)
@@ -79,15 +120,16 @@ def tps_nr_err(x_ma, lin_ag, trans_g, w_ng, x_na):
         err_mab[m] = np.dot(grad_mga[m].T, grad_mga[m]) - np.eye(D)
     return err_mab.flatten()
 
-def tps_cost(lin_ag, trans_g, w_ng, x_na, y_ng, bend_coef, K_nn=None, return_tuple=False):
+def tps_cost(lin_ag, trans_g, w_ng, x_na, y_ng, bend_coef, K_nn=None, return_tuple=False, wt_n = None):
     """
     XXX doesn't include rotation cost
     """
     D = lin_ag.shape[0]
-    if K_nn is None: K_nn = ssd.squareform(ssd.pdist(x_na))
+    if K_nn is None: K_nn = tps_kernel_matrix(x_na)
+    if wt_n is None: wt_n = np.ones(len(x_na))
     ypred_ng = np.dot(K_nn, w_ng) + np.dot(x_na, lin_ag) + trans_g[None,:]
-    res_cost = ((ypred_ng - y_ng)**2).sum()
-    bend_cost = bend_coef * sum(np.dot(w_ng[:,g], np.dot(-K_nn, w_ng[:,g])) for g in xrange(D))
+    res_cost = (wt_n[:,None] * (ypred_ng - y_ng)**2).sum()
+    bend_cost = bend_coef * sum(np.dot(w_ng[:,g], np.dot(K_nn, w_ng[:,g])) for g in xrange(D))
     if return_tuple:
         return res_cost, bend_cost, res_cost + bend_cost
     else:
@@ -95,10 +137,10 @@ def tps_cost(lin_ag, trans_g, w_ng, x_na, y_ng, bend_coef, K_nn=None, return_tup
 
 def tps_nr_cost_eval(lin_ag, trans_g, w_ng, x_na, y_ng, xnr_ma, bend_coef, nr_coef, K_nn = None, return_tuple=False):
     D = lin_ag.shape[0]
-    if K_nn is None: K_nn = ssd.squareform(ssd.pdist(x_na))
+    if K_nn is None: K_nn = tps_kernel_matrix(x_na)
     ypred_ng = np.dot(K_nn, w_ng) + np.dot(x_na, lin_ag) + trans_g[None,:]
     res_cost = ((ypred_ng - y_ng)**2).sum()
-    bend_cost = bend_coef * sum(np.dot(w_ng[:,g], np.dot(-K_nn, w_ng[:,g])) for g in xrange(D))
+    bend_cost = bend_coef * sum(np.dot(w_ng[:,g], np.dot(K_nn, w_ng[:,g])) for g in xrange(D))
     nr_cost = nr_coef * (tps_nr_err(xnr_ma, lin_ag, trans_g, w_ng, x_na)**2).sum()
     if return_tuple:
         return res_cost, bend_cost, nr_cost, res_cost + bend_cost + nr_cost
@@ -111,7 +153,7 @@ def tps_nr_cost_eval_general(lin_ag, trans_g, w_eg, x_ea, y_ng, nr_ma, bend_coef
     M = nr_ma.shape[0]
     assert E == N+4*M
     
-    K_ee = K_ee or ssd.squareform(ssd.pdist(x_ea))
+    K_ee = K_ee or tps_kernel_matrix(x_ea)
     K_ne = K_ee[:N]
     x_na = x_ea[:N]
     
@@ -124,27 +166,33 @@ def tps_nr_cost_eval_general(lin_ag, trans_g, w_eg, x_ea, y_ng, nr_ma, bend_coef
     else:
         return res_cost + bend_cost + nr_cost    
 
-
-def tps_fit(x_na, y_ng, bend_coef, rot_coef, wt_n=None):
+def tps_fit(x_na, y_ng, bend_coef, rot_coef, wt_n=None, K_nn = None):
     N,D = x_na.shape
         
-    # XXX wt not used
-    K_nn = ssd.squareform(ssd.pdist(x_na))
+    K_nn = tps_kernel_matrix(x_na) if K_nn is None else K_nn
     coef_ratio = bend_coef / rot_coef if rot_coef > 0 else 0
     #if wt_n is None: reg_nn = bend_coef * np.eye(N)    
     #else: reg_nn = np.diag(bend_coef/(wt_n + 1e-6))
     #print wt_n
-    reg_nn = bend_coef * np.eye(N)
     
-    A = np.r_[
-        np.c_[K_nn - reg_nn,   x_na,    np.ones((N,1))],
-        np.c_[x_na.T,      coef_ratio * np.eye(D), np.zeros((D,1))],
-        np.c_[np.ones((1,N)),     np.zeros((1,D)), 0]]
-    B = np.r_[
-        y_ng,
-        coef_ratio * np.eye(D),
-        np.zeros((1, D))
-    ]
+    A = np.zeros((N+D+1, N+D+1))
+    
+    A[:N, :N] = K_nn
+
+    A.flat[np.arange(0,N)*(N+D+2)] += bend_coef/(wt_n if wt_n is not None else 1)
+
+    A[:N, N:N+D] = x_na
+    A[:N, N+D] = 1
+
+    A[N:N+D,:N] = x_na.T
+    A[N+D,:N] = 1
+    
+    A[N:N+D, N:N+D] = coef_ratio*np.eye(D)
+    
+    B = np.empty((N+D+1, D))
+    B[:N] = y_ng
+    B[N:N+D] = coef_ratio*np.eye(D)
+    B[N+D] = 0
     
     X = np.linalg.solve(A, B)
     w_ng = X[:N,:]
@@ -152,13 +200,8 @@ def tps_fit(x_na, y_ng, bend_coef, rot_coef, wt_n=None):
     trans_g = X[N+D,:]
     return lin_ag, trans_g, w_ng
     
-    
-"""
-Note: we can massively speed this up for repeated solving:
-- only need to compute QWQ  once
-- only need to do svd(A) once
-- 
-"""    
+
+
     
 def solve_eqp1(H, f, A):
     """solve equality-constrained qp
@@ -171,8 +214,6 @@ def solve_eqp1(H, f, A):
     assert A.shape[1] == n_vars
     n_cnts = A.shape[0]
     
-    dim_feas = n_vars - n_cnts
-
     _u,_s,_vh = np.linalg.svd(A.T)
     N = _u[:,n_cnts:]
     # columns of N span the null space
@@ -188,40 +229,38 @@ def solve_eqp1(H, f, A):
 def tps_fit3(x_na, y_ng, bend_coef, rot_coef, wt_n):
     if wt_n is None: wt_n = np.ones(len(x_na))
     n,d = x_na.shape
-    assert d == 3
-    K_nn = ssd.squareform(ssd.pdist(x_na))
+
+    K_nn = tps_kernel_matrix(x_na)
     Q = np.c_[np.ones((n,1)), x_na, K_nn]
     WQ = wt_n[:,None] * Q
     QWQ = Q.T.dot(WQ)
     H = QWQ
-    H[4:,4:] -= bend_coef * K_nn # -K_nn is conditionally positive definite (CPD)
-    H[1:4, 1:4] += rot_coef * np.eye(3)
+    H[d+1:,d+1:] += bend_coef * K_nn
+    rot_coefs = np.ones(d) * rot_coef if np.isscalar(rot_coef) else rot_coef
+    H[1:d+1, 1:d+1] += np.diag(rot_coefs)
     
     f = -WQ.T.dot(y_ng)
-    f[1:4,0:3] -= rot_coef * np.eye(3)
+    f[1:d+1,0:d] -= np.diag(rot_coefs)
     
-    A = np.r_[np.zeros((4,4)), np.c_[np.ones((n,1)), x_na]].T
+    A = np.r_[np.zeros((d+1,d+1)), np.c_[np.ones((n,1)), x_na]].T
     
     Theta = solve_eqp1(H,f,A)
     
-    return Theta[1:4], Theta[0], Theta[4:]
-    
-    
-    
-    
+    return Theta[1:d+1], Theta[0], Theta[d+1:]
     
     
 def tps_fit2(x_na, y_ng, bend_coef, rot_coef, wt_n=None):
+    if wt_n is not None: raise NotImplementedError
 
     N,D = x_na.shape 
     _u,_s,_vh = np.linalg.svd(np.c_[x_na, np.ones((N,1))], full_matrices=True)
     N_nq = _u[:,4:] # null of data
-    K_nn = ssd.squareform(ssd.pdist(x_na))
+    K_nn = tps_kernel_matrix(x_na)
     Q_nn = np.c_[x_na, np.ones((N,1)),K_nn.dot(N_nq)]
     QQ_nn = np.dot(Q_nn.T, Q_nn)
     
     A = QQ_nn    
-    A[4:, 4:] -= bend_coef * N_nq.T.dot(K_nn).dot(N_nq)
+    A[4:, 4:] += bend_coef * N_nq.T.dot(K_nn).dot(N_nq)
     B = Q_nn.T.dot(y_ng)
 
     A[:3, :3] += rot_coef * np.eye(3)
@@ -251,7 +290,7 @@ def tps_nr_fit(x_na, y_ng, bend_coef, nr_ma, nr_coef, method="newton"):
     N_nq = _u[:,4:] # null of data
     #w_ng = N_nq.dot(N_nq.T.dot(w_ng))
         
-    K_nn = ssd.squareform(ssd.pdist(x_na))
+    K_nn = tps_kernel_matrix(x_na)
     Q_nn = np.c_[x_na, np.ones((N,1)),K_nn.dot(N_nq)]
     QQ_nn = np.dot(Q_nn.T, Q_nn)
     Bend_nn = np.zeros((N,N))
@@ -331,7 +370,7 @@ def tps_nr_fit(x_na, y_ng, bend_coef, nr_ma, nr_coef, method="newton"):
 
 
 
-def tps_nr_fit_enhanced(x_na, y_ng, bend_coef, nr_ma, nr_coef, plotting=0):
+def tps_nr_fit_enhanced(x_na, y_ng, bend_coef, nr_ma, nr_coef):
     
     N,D = x_na.shape
     M = nr_ma.shape[0]
@@ -367,7 +406,7 @@ def tps_nr_fit_enhanced(x_na, y_ng, bend_coef, nr_ma, nr_coef, plotting=0):
     # e is number of kernels
     # q is number of nonrigid dofs
     # f is total number of dofs
-    K_ee = ssd.squareform(ssd.pdist(x_ea))
+    K_ee = tps_kernel_matrix(x_ea)
     K_ne = K_ee[:N, :]
     Q_nf = np.c_[x_na, np.ones((N,1)),K_ne.dot(N_eq)]
     QQ_ff = np.dot(Q_nf.T, Q_nf)
@@ -433,17 +472,18 @@ def tps_fit_fixedrot(x_na, y_ng, bend_coef, lin_ag, K_nn = None, wt_n=None):
     """
     minimize (Y-KA-XB-1C)'W(Y-KA-XB-1C) + tr(A'KA) + r(B)
     """
+    if wt_n is not None: raise NotImplementedError
     
     N,_D = x_na.shape
     _u,_s,_vh = np.linalg.svd(np.c_[x_na, np.ones((N,1))], full_matrices=True)
     N_nq = _u[:,4:] # null of data
-    K_nn = ssd.squareform(ssd.pdist(x_na))
+    K_nn = tps_kernel_matrix(x_na)
 
     Q_nn = np.c_[np.ones((N,1)),K_nn.dot(N_nq)]
     QQ_nn = np.dot(Q_nn.T, Q_nn)
     
     A = QQ_nn
-    A[1:, 1:] -= bend_coef * N_nq.T.dot(K_nn).dot(N_nq)
+    A[1:, 1:] += bend_coef * N_nq.T.dot(K_nn).dot(N_nq)
     B = Q_nn.T.dot(y_ng-x_na.dot(lin_ag))
 
     X = np.linalg.solve(A,B)
@@ -453,19 +493,20 @@ def tps_fit_fixedrot(x_na, y_ng, bend_coef, lin_ag, K_nn = None, wt_n=None):
     return trans_g, w_ng
     
 
-def tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n=None, max_iter = 10, inner_max_iter=100, rgrad=None, l_init=None):
+def tps_fit_regrot(x_na, y_ng, bend_coef, rfunc, wt_n=None, max_iter = 1, inner_max_iter=100, rgrad=None, l_init=None):
     """
     minimize (Y-KA-XB-1C)' W (Y-KA-XB-1C) + tr(A'KA) + r(B)
     subject to A'(X 1) = 0
     """
-    
-    K_nn = ssd.squareform(ssd.pdist(x_na))
-    N,_ = x_na.shape
-    
-    if wt_n is not None: print "warning: wt_n specified but not used"
+    if rgrad is not None: raise NotImplementedError
+    if wt_n is not None: raise NotImplementedError
+
+
+    N,_D = x_na.shape
+    K_nn = tps_kernel_matrix(x_na)
     # initialize with tps_fit and small rotation regularization
     if l_init is None: 
-        lin_ag, trans_g, w_ng = tps_fit2(x_na, y_ng, bend_coef, .01, wt_n)
+        lin_ag, trans_g, w_ng = tps_fit3(x_na, y_ng, bend_coef, .01, wt_n)
     else:
         lin_ag = l_init
         if True: print "initializing rotation with\n ",lin_ag
@@ -523,4 +564,5 @@ def tps_cost_regrot(lin_ag, trans_g, w_ng, x_na, y_ng, bend_coef, rfunc, K_nn = 
     (Y-KA-XB-1C)' W (Y-KA-XB-1C) + tr(A'KA) + r(B)
     subject to A'(X 1) = 0
     """
+    if wt_n is not None: raise NotImplementedError
     return tps_cost(lin_ag, trans_g, w_ng, x_na, y_ng, bend_coef, K_nn) + rfunc(lin_ag)

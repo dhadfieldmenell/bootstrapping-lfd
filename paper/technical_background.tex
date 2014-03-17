@@ -1,0 +1,54 @@
+\subsection{Trajectory Transfer}
+\emph{Trajectory transfer} is an approach to learning from expert demonstrations~\cite{Schulmanetal_ISRR2013}. The trajectory transfer
+algorithm is given a current scene, $s_{test}$, demonstration scene, $s_{demo}$ and a demonstration trajectory,  
+$t_{demo}$, as input. We assume that the scenes are made up of matched points in $\mathbb{R}^3$. The first step is to 
+find a function, $f^*:\mathbb{R}^3 \rightarrow \mathbb{R}^3$, as the solution to the following optimization problem:
+\begin{equation}\min_f \sum_i ||s_{test}^{(i)} - s_{demo}^{(i)}||^2 + C\int dx ||D^2(f)||^2_{Frob}.\label{eq:tps}\end{equation}
+The minimizing $f$ will be a Thin Plate Spline, and can be expressed as a linear combination of basis
+functions about the correspondence points~\cite{Wahba_TPS1990}. $C$ is a hyper-parameter that trades off
+between goodness of fit and the curvature of the function. The solution to this optimization can be computed
+as the solution to a linear system of equations.
+
+Given a warping, $f^*$, between the demo and test scenes, we take each pose from the demo trajectory and pase it through
+$f^*$. Poses are transferred by mapping coordinate frames through the jacobian of $f^*$. The trajectory that results from this
+is used to guide a motion planner that finds a similar feasible trajectory. This trajectory is executed in the test scene.
+In the case where correspondences are not known initially, one can use TPS-RPM, an approach that jointly finds
+correspondences and a mapping between them by alternating between estimating correspondences and solving for 
+a thin plate spline\cite{Chui_CVIU2003}.
+
+Schulman et al.~\cite{Schulmanetal_ISRR2013} provide some intuition for scenarios where this approach is likely
+to succeed. They assume a cost function, $L$, on states and trajectories, a reasonable option might be 0-1 loss, depending
+on whether the trajectory successfully executes a desired manipulation in a given state.  Then we can justify warping the
+state $s$ and the trajectory $t$ 
+in the case where $L(s, t)~=~L(f(s), f(t))$. Essentially, the of a manipulation is preserved under a class of transformations,
+thus, we can successfully transform a state and trajectory and maintain the relation that the manipulation succeeds. The set of functions
+that have this property define a set of states that a particular demonstration trajectory can transfer to.
+
+A final aspect of this approach is the incorporation of multiple trajectories. Given a library of trajectories,
+one can increase the number of states that can be generalized to. This allows an expert to demonstrate steps of a complex task
+which can be sequenced at test time. This can make trajectory transfer more robust and reliable, as an expert can also
+include demonstrations to recover from common failures. Current approaches use the nearest-neighbor with respect to registration
+cost (the value of the optimization problem defined in (\ref{eq:tps})). This corresponds to modeling the set of states a demonstration
+can generalize to---that is states for which $L$ is invariant to the TPS warping found by TPS-RPM---as a hyper-sphere 
+in a high-dimensional space where this registration cost is a distance function.
+\subsection{Manifold Learning}
+One way to characterize our approach is that of characterizing, for a particular demonstration,
+the manifold in state space such that the TPS warping of that demonstration will correctly executed 
+the desired task. The field of \emph{manifold learning} concerns itself with a similar problem:
+that of learning a low-dimensional representation of data. This low-dimensional representation 
+is arrived at by assuming that it is drawn from a lower dimensional manifold.
+
+Formally, a $d$-dimensional manifold, $M$, is a set of points such that a local neighborhood 
+around any point can be mapped to $\mathbb{R}^d$ with a homomorphism~\cite{cayton2005algorithms}. Informally, this is usually 
+a set of points in a high dimensional euclidean space that can be paramaterized with $d$ values.
+Manifold learning attempts to learn these manifolds from data.
+
+This has a broad range of applications and approaches. Principal Component Analysis solves
+this problem for the case where the manifold is a linear subspace~\cite{jolliffe2005principal}.
+For manifolds that are not linear, many approaches attempt to find an embedding in low dimensional
+euclidean space that preserves geodesic distances, distance measured along the manifold, between points.
+One approach, Isomap, approximates this geodesic distance by the euclidean distance to the nearest neighbor.
+The underlying assumption here is that locally, the geodesic distance on the manifold is well approximated by the 
+euclidean distance\dhm{cite Isomap paper}.
+
+

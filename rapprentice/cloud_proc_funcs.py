@@ -1,9 +1,9 @@
 import cloudprocpy
 from rapprentice import berkeley_pr2, clouds
 import cv2, numpy as np
-import rapprentice
 
 DEBUG_PLOTS = False
+
 
 def extract_red(rgb, depth, T_w_k):
     """
@@ -30,7 +30,7 @@ def extract_red(rgb, depth, T_w_k):
         cv2.imshow("rgb", rgb)
         cv2.waitKey()
     
-    height_mask = xyz_w[:,:,2] > .7 # XXXX pass in parameter
+    height_mask = xyz_w[:,:,2] > .7 # TODO pass in parameter
     
     
     good_mask = red_mask & height_mask & valid_mask
@@ -46,17 +46,54 @@ def extract_red(rgb, depth, T_w_k):
 
     good_xyz = xyz_w[good_mask]
     
-    cloud = cloudprocpy.CloudXYZ()    
-    good_xyz1 = np.zeros((len(good_xyz), 4), 'float32')
-    good_xyz1[:,:3] = good_xyz
-    cloud.from2dArray(good_xyz1)
-    
-    cloud_ds = cloudprocpy.downsampleCloud(cloud, .01)
-    
-    return cloud_ds.to2dArray()[:,:3]
-    
-    
 
+    return clouds.downsample(good_xyz, .01)
+    
+    
+def grabcut(rgb, depth, T_w_k):
+    xyz_k = clouds.depth_to_xyz(depth, berkeley_pr2.f)
+    xyz_w = xyz_k.dot(T_w_k[:3,:3].T) + T_w_k[:3,3][None,None,:]
+
+    valid_mask = depth > 0
+
+    import interactive_roi as ir
+    xys = ir.get_polyline(rgb, "rgb")
+    xy_corner1 = np.clip(np.array(xys).min(axis=0), [0,0], [639,479])
+    xy_corner2 = np.clip(np.array(xys).max(axis=0), [0,0], [639,479])
+    polymask = ir.mask_from_poly(xys)
+    #cv2.imshow("mask",mask)
+        
+    xy_tl = np.array([xy_corner1, xy_corner2]).min(axis=0)
+    xy_br = np.array([xy_corner1, xy_corner2]).max(axis=0)
+
+    xl, yl = xy_tl
+    w, h = xy_br - xy_tl
+    mask = np.zeros((h,w),dtype='uint8')    
+    mask[polymask[yl:yl+h, xl:xl+w] > 0] = cv2.GC_PR_FGD
+    print mask.shape
+    #mask[h//4:3*h//4, w//4:3*w//4] = cv2.GC_PR_FGD
+
+    tmp1 = np.zeros((1, 13 * 5))
+    tmp2 = np.zeros((1, 13 * 5))    
+    cv2.grabCut(rgb[yl:yl+h, xl:xl+w, :],mask,(0,0,0,0),tmp1, tmp2,10,mode=cv2.GC_INIT_WITH_MASK)
+
+    mask = mask % 2
+    #mask = ndi.binary_erosion(mask, utils_images.disk(args.erode)).astype('uint8')
+    contours = cv2.findContours(mask,cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)[0]
+    cv2.drawContours(rgb[yl:yl+h, xl:xl+w, :],contours,-1,(0,255,0),thickness=2)
+    
+    cv2.imshow('rgb', rgb)
+    print "press enter to continue"
+    cv2.waitKey()
+
+    zsel = xyz_w[yl:yl+h, xl:xl+w, 2]
+    mask = (mask%2==1) & np.isfinite(zsel)# & (zsel - table_height > -1)
+    mask &= valid_mask[yl:yl+h, xl:xl+w]
+    
+    xyz_sel = xyz_w[yl:yl+h, xl:xl+w,:][mask.astype('bool')]
+    return clouds.downsample(xyz_sel, .01)
+    #rgb_sel = rgb[yl:yl+h, xl:xl+w,:][mask.astype('bool')]
+        
 
 
 def extract_red_alphashape(cloud, robot):
@@ -71,7 +108,7 @@ def extract_red_alphashape(cloud, robot):
     # transform into body frame
     xyz1_kinect = cloud_ds.to2dArray()
     xyz1_kinect[:,3] = 1
-    T_w_k = get_kinect_transform(robot)
+    T_w_k = berkeley_pr2.get_kinect_transform(robot)
     xyz1_robot = xyz1_kinect.dot(T_w_k.T)
     
     # compute 2D alpha shape

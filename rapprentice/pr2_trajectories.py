@@ -1,7 +1,7 @@
-import rospy
 import numpy as np
 from rapprentice import conversions as conv, math_utils as mu, \
-    kinematics_utils as ku, retiming, PR2
+    retiming, PR2, resampling
+from rapprentice import LOG
 
 def make_joint_traj(xyzs, quats, manip, ref_frame, targ_frame, filter_options = 0):
     "do ik and then fill in the points where ik failed"
@@ -29,7 +29,7 @@ def make_joint_traj(xyzs, quats, manip, ref_frame, targ_frame, filter_options = 
     robot.SetActiveDOFValues(orig_joint)
     
     
-    rospy.loginfo("found ik soln for %i of %i points",len(inds), n)
+    LOG.info("found ik soln for %i of %i points",len(inds), n)
     if len(inds) > 2:
         joints2 = mu.interp2d(np.arange(n), inds, joints)
         return joints2, inds
@@ -40,7 +40,7 @@ def make_joint_traj(xyzs, quats, manip, ref_frame, targ_frame, filter_options = 
 
 def follow_body_traj(pr2, bodypart2traj, wait=True, base_frame = "/base_footprint", speed_factor=1):    
 
-    rospy.loginfo("following trajectory with bodyparts %s", " ".join(bodypart2traj.keys()))
+    LOG.info("following trajectory with bodyparts %s", " ".join(bodypart2traj.keys()))
     
     name2part = {"lgrip":pr2.lgrip, 
                  "rgrip":pr2.rgrip, 
@@ -103,7 +103,7 @@ def follow_body_traj(pr2, bodypart2traj, wait=True, base_frame = "/base_footprin
             if name == "lgrip" or name == "rgrip":
                 part.follow_timed_trajectory(times_up, part_traj.flatten())
             elif name == "larm" or name == "rarm":
-                vels = ku.get_velocities(part_traj, times_up, .001)
+                vels = resampling.get_velocities(part_traj, times_up, .001)
                 part.follow_timed_joint_trajectory(part_traj, vels, times_up)
             elif name == "base":
                 part.follow_timed_trajectory(times_up, part_traj, base_frame)
@@ -171,5 +171,5 @@ def follow_rave_trajectory(pr2, ravetraj, dof_inds, use_base = False, base_frame
         base_traj = ravetraj[:,-3:]
         bodypart2traj["base"] = base_traj
         
-    follow_body_traj2(pr2, bodypart2traj, base_frame = base_frame)
+    follow_body_traj(pr2, bodypart2traj, base_frame = base_frame)
     
