@@ -1,1 +1,10 @@
-Very
+Deformable object manipulation remains a challenging task in robotics.
+Continuous, high dimensional, state and action spaces make standard
+model-based approaches to manipulation planning intractable. Recent work
+has shown progress on this task by learning from
+demonstrations through 
+\emph{trajectory transfer}~\cite{Schulmanetal_ISRR2013, Schulmanetal_IROS2013}. This approach avoids planning in the state space of a deformable object
+by finding a spatial warping that can be used to apply an expert demonstration
+to a new scene.
+
+We propose a method for improving trajectory transfer that makes use of bootstrapping examples through simulation. Given a simulator and a way to detect success, we augment our trajectory library with example states and transferred trajectories that have succeeded in simulation. We apply this approach to a simulated overhand knot-tying task. The approach described in Schulman et al.~\cite{Schulmanetal_ISRR2013} achieves a success rate of 59\%. We demonstrate performance of up to 85\%. 

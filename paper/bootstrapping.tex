@@ -1,6 +1,91 @@
-In this section,
-%\subsection{Transfer Manifolds}
-%\subsection{Trajectory Selection and a Nearest-Manifold Query}
-%\subsection{Learning Segment Trees}
+In this section, we present our algorithm for bootstrapping new examples 
+from expert demonstrations. At its core, the idea is simple: if we get
+examples of new states that are able to successfully transfer a trajectory to,
+we get a new example of a successful manipulation. We can use these examples
+to transfer trajectories better in new settings.
 
-As a motivating example, consider the problem of tying knots in ropes. The process of tying a knot can be broken down into several steps where each step consists of a simple action of grabbing the rope in one or two places, moving the grippers, and then releasing the rope. We call each step a segment. See \fig{knots} for some example knots and tying segments. To help the robot tie the knot a human records several expert demonstrations by manually guiding the trajectory of the grippers and commanding the robot when to open and close the grippers. For each step or segment during the task demonstration of tying the knot, the robot records the initial state of the rope in the form of a pointcloud, the trajectory of the grippers, and the gripper closing and opening events.
+Formally, we assume access to an environment and a reward signal. In our work, this
+environment is simulated although the approach can apply to real settings. 
+Our reward signal is a 1-0 response which tells us if a manipulation succeeds. For 
+tasks involving several steps, we associate success with a manipulation if a success
+signal is received before a fixed time horizon is reached.
+
+To ease discussion, we will use the concept of a \emph{transfer set}. Given a method for
+transfering a demonstration trajectory to a new state, the associated transfer set is
+the set of states such that the transferred trajectory will successfully execute a
+demonstrated manipulation. The assumption behind the nearest-neighbor selection
+method from Schulman et al.~\cite{Schulmanetal_ISRR2013} can be stated that states
+which have a low registration cost to the demonstration scene are likely to be in the
+transfer set for that demonstration. This assumes that the state space is locally
+smooth with respect to registration cost. In practice, this assumption has been
+borne out in the success of this approach.
+
+
+By attempting to transfer trajectories in simulation, we can get additional feedback
+and examples of states that are in the transfer set for our demonstrations.
+Continuing with this line of reasoning, a natural next step is to hope that that
+states that are close (with respect to registration cost) to states in the transfer
+set are likely to be that transfer set. This suggest a simple way to improve performance
+through experimentation: given a set of
+states that a trajectory, $t$,  has been successfully transferred to, $S_T$,
+we select a trajectory to transfer according to the following rule:
+\begin{equation}
+\underset{t}{\argmin} \ \ \underset{s\in S_t}{\min} \ \ {\text{registration cost}}(s).
+\end{equation}
+
+We can take this idea a step further. When we succeed in completing a task in a new scenario, we get a new set of states and trajectories that perform our desired manipulation.
+These are new examples of successful manipulations in their own right. Instead of simply storing the states we successfully transfer to, we can add those examples to our trajectory 
+library and consider transferring the derived trajectories to new scenes. Alg.~\ref{alg:bootstrap} shows an exploration strategy to apply bootstrapping to a trajectory library. The process
+repeatedly selects the nearest-neighbour with respect to registration cost, and adds it to the trajectory library if successful.
+
+\begin{algorithm}
+ \SetKwInOut{trajLib}{input}\SetKwInOut{bootstrapLib}{output}
+
+ \trajLib{trajLib $= \left[(s_{1},t_{1}), (s_{2}, t_{2}), \ldots \right]$}
+ \bootstrapLib{bootstrapLib, bootstrapped trajectory library}
+ bootstrapLib $\leftarrow$ trajLib\;
+  \For{$i \leftarrow 0$ \KwTo $N$}{
+        $s_{test}$ $\leftarrow$ sampleNewInitialState()\;
+        $(s_{p}, t_{p})$ $\leftarrow \underset{(s,t)}{\argmin} \ registration\_cost(s, s_{test})$\;
+        $t_{warped}$ $\leftarrow$ $fit\_TPS(s_{p}, s_{test}, t_{parent})$\;
+
+        \If{successful\_trajectory\_execution}{
+          bootstrapLib $\leftarrow$ $(s_{p}, t_{warped})$ $\cup$ bootstrapLib \;
+        }
+    }
+ \caption{Bootstrapping a Trajectory Library}
+ \label{alg:bootstrap}
+\end{algorithm}
+
+One possible objection to this method is as follows: given that these derived examples are simply deformations of an original, why would we expect this to be better than simply transferring the original? The answer to this question is based in different aspects of the TPS approach to trajectory transfer.
+
+The first is that, in addition to finding a transfer function that minimizes curvature, we are also finding correspondences between points in the different scenes. Finding correspondences is a difficult and well-studied problem in computer vision and the best approaches are subject to local optima. The TPS-RPM algorithm is no exception. 
+
+We could appeal to local features to improve this difficulty, but finding feature descriptors that capture important aspects of general manipulation problems is a difficult task. The states we add to our trajectory library are examples of states and correspondences that successfully transferred a demonstration trajectory. By transferring directly from those states, as opposed to the original demonstration state, we are providing a better 
+initialization to the TPS-RPM algorithm and we should be able to find better correspondences between points.
+
+The second reason we would expect this to be successful is that in transferring derived states and trajectories, we enable the use of a broader class of functions for transferring trajectories. In transferring a trajectory, $t$, from state $s_1$ through state $s_2$ to $s_3$, we compute a thin plate spline from $s_1$ to $s_2$ 
+($f_{1\rightarrow 2}$) then from $s_2$ to $s_3$ ($f_{2\rightarrow 3}$). The trajectory we execute is then $f_{1\rightarrow 2}(f_{2\rightarrow 3}(t)) \ne f_{1\rightarrow 3}(t)$. 
+Instead of using a thin plate spline, we are using a form of iterated thin plate spline.
+
+The intuition behind this is that a thin plate spline represents an encoding of a preference
+for non-rigid functions to transfer a state. For a general approach, this is a good
+preference to have. However, for a particular manipulation task, not all deformations
+will have the same effect on transfer success. 
+
+As an example, consider a robot transferring
+trajectories for opening a drawer. In transferring the first portion of a demonstration,
+almost any deformation is OK: all that needs to happen is that the robot grabs the drawer handle.
+However, for the second part---actually opening the drawer---almost any non-rigid deformation
+will result in a failed transfer.
+
+In fitting a thin plate spline to derived trajectories, we gain the ability 
+to learn these transfer properties for the manipulation we are exploring.
+The non-rigid deformations that resulted in successful transfers are no longer
+penalized in fitting the thin plate spline. For our drawer example, after enough
+examples of successful transfers this technique would effectively learn to allow
+certain types of deformations (e.g. those that allow us to grab the drawer) but still
+maintain the ability to penalize for others (e.g. deformations that do not allow the robot to
+open the drawer).
+
+

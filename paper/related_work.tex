@@ -1,6 +1,55 @@
-\begin{itemize}
-  \item Reinforcement Learning
-    \item Deformable Object Manipulation (particularly knot-tying)
-      \item Manifold Learning
-        \item Anything else?
-\end{itemize}
+Our approach to learning from demonstrations avoids building explicit representations
+and models of objects and states spaces. Thus, it is well suited to deformable object 
+manipulations. It is challenging to manipulate deformable objects due to their nonlinearity
+and because the configuration spaces of such objects may be
+infinite-dimensional~\cite{Lamiraux_IJRR2001}.
+
+In previous work, Wada et al. model textile fabric and sponge blocks
+coarsely and then apply a control method that is robust
+to discrepancies between the coarse model and the
+object~\cite{Wada_ArticMotion2000}. Howard et al. present a more
+general approach for grasping 3D deformable objects
+that does not assume prior knowledge of the object.
+They model particle motion of the object using nonlinear partial differential
+equations, and train a neural network for determining the minimum force
+required for manipulating the object~\cite{Howard_AutRobots2000}.
+
+We validate our approach and present results for knot tying. There is
+a rich literature of knot-specific approaches to this problem.
+For instance, in knot planning from observation (KPO), knot theory is used
+to recognize rope configurations and define
+movement primitives from visual observations of humans tying
+knots~\cite{Morita_ICRA2003, Takamatsu_TransRob2006}.
+Existing motion planning approaches for knot tying use topological
+representations of rope states (i.e. sequences of rope crossings and their
+properties) and define a model for transitioning between topological
+states~\cite{Moll_IEEERobot2006, Saha_ExpRobotics2008, Wakamatsu_IJRR2006}.
+Robust open loop execution of knot tying has also been explored~\cite{Bell_PhD2010}
+
+The problem of learning from demonstrations (LfD) deals with the generalization of expert demonstrations to 
+new scenarios~\cite{Argall_2009, Schaal_1999}. Behavioral cloning is an approach to LfD that 
+directly learns a policy to mimic an expert's behavior.
+
+One of the first successful applications of this strategy is the ALVINN system~\cite{Pomerleau_NIPS1989}, which utilizes a 
+neural network to learn a steering policy that enables an autonomous car to follow a road.
+\cite{muller2005off} use a convolutional network to learn a steering policy for off-road driving.
+\cite{Ratliff_Humanoids2007} uses multi-class classification to learn a function that scores actions 
+to predict good foot steps for robot locomotion and good grasps for robot manipulation.
+\cite{Ross_2013} propose a method to directly control a Micro UAV from RGB camera input.
+
+Miyamoto et al. describe an approach for learning to play Kendama~\cite{Miyamoto_1996} and hit a 
+tennis ball~\cite{Miyamoto_1998} from demonstrated actions. 
+Their method is successful at generalizing human trajectories and incorporates sequential information 
+from multiple demonstrations.
+However, this approach requires hand tuning of waypoints and does not generalize to new scenes.
+
+Isaac et al.~\cite{Isaac_ICML2003} use behavioral cloning to learn to fly an airplane, by making use of an abstract, 
+goal-directed, layer which sits on top of a low-level PID controller.
+This goal-directed learning is similar in spirit to ours, although it makes use of a different formalism
+and uses simpler low level controllers.
+
+Calinon et al. learn a mixture of Gaussians to represent the joint trajectory of the robot and environment
+state across multiple demonstrations, and infer the trajectory for a new
+environment state by conditioning on that state~\cite{Calinon_SMC2007, Calinon_HUM2009}. Their approach
+assumes access to a feature representation of the environment, so it cannot directly be applied to tasks in
+environments without fixed feature representations --- such as our application of knot tying.
