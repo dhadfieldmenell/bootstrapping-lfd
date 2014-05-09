@@ -21,8 +21,11 @@ If you're using fake data, don't update it.
 from rapprentice import registration, colorize, \
     animate_traj, ros2rave, plotting_openrave, task_execution, \
     planning, func_utils, resampling, rope_initialization, clouds, ropesim_floating
+from file_utils import setup_bootstrap_file
 from rapprentice import math_utils as mu
 from knot_classifier import isKnot as is_knot
+from pdb import pm, set_trace
+import os.path as osp
 
 import trajoptpy
 import openravepy
@@ -73,8 +76,8 @@ class RopeState:
         self.perturb_num_points = perturb_num_points
 
 class TaskParameters:
-    def __init__(self, action_file, cloud_xyz, animate=False, warp_root=True, max_steps_before_failure=5,
-                 no_cmat=False):
+    def __init__(self, action_file, cloud_xyz, animate=False, warp_root=False, 
+                 max_steps_before_failure=5,no_cmat=False):
         self.action_file = action_file
         self.cloud_xyz = cloud_xyz
         self.animate = animate
@@ -308,12 +311,14 @@ def registration_cost(xyz0, xyz1):
     return cost
 
 
-def auto_choose(actionfile, new_xyz, nparallel=-1):
+def auto_choose(actionfile, new_xyz, softmin = 1, nparallel=-1):
     """
-    @param demofile: h5py.File object
-    @param new_xyz : new rope point-cloud
-    @nparallel     : number of parallel jobs to run for tps cost calculaion.
-                     If -1 only 1 job is used (no parallelization).
+    @param demofile  : h5py.File object
+    @param new_xyz   : new rope point-cloud
+    @param softmin   : use softmin distribution over first <softmin> demonstrations
+                       set to 1 for nearest neighbor
+    @param nparallel : number of parallel jobs to run for tps cost calculaion
+                       set to -1 for no parallelization
     
     @return          : return the name of the segment with the lowest warping cost.
     """
@@ -452,7 +457,6 @@ def do_single_task(task_params):
     animate       = task_params.animate
     max_steps_before_failure = task_params.max_steps_before_failure
     choose_segment = auto_choose
-    knot = "any"
     no_cmat = task_params.no_cmat
 
     ### Setup ###
@@ -468,7 +472,7 @@ def do_single_task(task_params):
         print "i =", i
         if max_steps_before_failure != -1 and i >= max_steps_before_failure:
             break
-        loop_result = loop_body(task_params, demofile, choose_segment, knot, animate, curr_step=i, no_cmat=no_cmat)
+        loop_result = loop_body(task_params, demofile, choose_segment, animate, curr_step=i, no_cmat=no_cmat)
         if loop_result is not None:
             knot_result = loop_result['found_knot']
             loop_results.append(loop_result)
@@ -481,6 +485,7 @@ def do_single_task(task_params):
             break
         i += 1
     demofile.close()
+    # ipy.embed()
     seg_info_list = [loop_result['seg_info'] for loop_result in loop_results]
     return {'success':knot_results[-1], 'seg_info':seg_info_list}
 
@@ -555,13 +560,16 @@ def setup_and_return_action_file(action_file, new_xyz, animate):
 
     return demofile
 
-compare_bootstrap_correspondences = False# set to true and call with warp_root=False to compare warping derived trajectories to warping initial with bootstrapped correspondences
+compare_bootstrap_correspondences = False
+# set to true and call with warp_root=False to compare warping derived trajectories to warping initial with bootstrapped correspondences
 
-def get_warped_trajectory(seg_info, new_xyz, demofile, warp_root=True, plot=False, no_cmat=False):
+def get_warped_trajectory(seg_info, new_xyz, demofile, warp_root=False, plot=False, no_cmat=False):
     """
     @seg_info  : segment information from the h5 file for the segment with least tps fit cost.
     @new_xyz   : point cloud of the rope in the test situation.
     @warp_root : warp the root trajectory if True else warp the chosen segment's trajectory.
+    @plot      : plot the warping as we run TPS-RPM
+    @no_cmat   : if True, does not use the correspondence matrix to the root to initialize TPS-RPM
     
     @returns   : the warped trajectory for l/r grippers and the mini-segment information.
     """
@@ -575,13 +583,17 @@ def get_warped_trajectory(seg_info, new_xyz, demofile, warp_root=True, plot=Fals
         handles.append(Globals.env.plot3(seg_xyz, 5, (1, 0, 0)))
 
     root_seg_name = seg_info['root_seg']
-    root_segment = demofile[root_seg_name.value]
+    root_segment  = demofile[root_seg_name.value]
     root_xyz      = root_segment['cloud_xyz'][:]
     seg_root_cmat = seg_info['cmat'][:]
+
     if warp_root:
+        ## transfer the trajectory from the root demonstration this demonstration is derived from
         scaled_root_xyz, root_params = registration.unit_boxify(root_xyz)
 
         if no_cmat:
+            ## find the correspondences from the root again
+            ## only use the bootstrapping for action selection
             print "not using cmat for correspondences"
             f_root2new, _, corr_new2root = registration.tps_rpm_bij(scaled_root_xyz, scaled_new_xyz,
                                                                     plotting=5 if plot else 0, plot_cb=tpsrpm_plot_cb,
@@ -589,10 +601,8 @@ def get_warped_trajectory(seg_info, new_xyz, demofile, warp_root=True, plot=Fals
                                                                     reg_init=10, reg_final=.01, old_xyz=root_xyz, new_xyz=new_xyz, 
                                                                     return_corr=True)
         else:
-
-            ## !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            ## TODO : MAKE SURE THAT THE SCALING IS BEING DONE CORRECTLY HERE:
-            ## !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!        
+            ## use the information from the bootstrapping example to initialize correspondences
+            ## uses bootstrapping to select demonstration to transfer and uses information from that transfer to improve warp
             f_root2new, _, corr_new2root = registration.tps_rpm_bootstrap(scaled_root_xyz, scaled_seg_xyz, scaled_new_xyz, seg_root_cmat, 
                                                                       plotting=5 if plot else 0, plot_cb=tpsrpm_plot_cb,
                                                                       rot_reg=np.r_[1e-4, 1e-4, 1e-1], n_iter=50,
@@ -603,7 +613,8 @@ def get_warped_trajectory(seg_info, new_xyz, demofile, warp_root=True, plot=Fals
         lgrip_joints = root_segment['l_gripper_joint'][:]
         cmat         = corr_new2root
 
-    else: ## warp to the chosen segment:
+    else: 
+        ## warp to the chosen segment, use an iterated TPS to transfer the root trajectory most use of bootstrapping
         f_seg2new, _, corr_new2seg = registration.tps_rpm_bij(scaled_seg_xyz, scaled_new_xyz, plot_cb=tpsrpm_plot_cb,
                                                               plotting=5 if plot else 0, rot_reg=np.r_[1e-4, 1e-4, 1e-1], n_iter=50,
                                                               reg_init=10, reg_final=.01, old_xyz=seg_xyz, new_xyz=new_xyz, 
@@ -611,11 +622,11 @@ def get_warped_trajectory(seg_info, new_xyz, demofile, warp_root=True, plot=Fals
         f_warping = registration.unscale_tps(f_seg2new, seg_params, new_params)
         old_ee_traj = seg_info['hmats']
         rgrip_joints = root_segment['r_gripper_joint'][:]
-        lgrip_joints = root_segment['l_gripper_joint'][:]
-        
+        lgrip_joints = root_segment['l_gripper_joint'][:]        
         cmat         = seg_root_cmat.dot(corr_new2seg)
         
         if compare_bootstrap_correspondences:
+            ## used to compare b/t warping root and warping derived demonstrations
             scaled_root_xyz, root_params = registration.unit_boxify(root_xyz)
     
             f_root2new, _, corr_new2root = registration.tps_rpm_bootstrap(scaled_root_xyz, scaled_seg_xyz, scaled_new_xyz, seg_root_cmat, 
@@ -634,13 +645,7 @@ def get_warped_trajectory(seg_info, new_xyz, demofile, warp_root=True, plot=Fals
                 handles.append(Globals.env.drawlinestrip(warped_root_ee_traj[:, :3, 3], 2, (0, 1, 0, 1)))
             if plot:
                 print 'traj norm differences:\t', diff
-                Globals.viewer.Idle()
-            
-            
-            
-
-        
-
+                Globals.viewer.Idle()                                          
     if plot:
         handles.extend(plotting_openrave.draw_grid(Globals.env, f_warping.transform_points, new_xyz.min(axis=0) - np.r_[0, 0, .1],
                                                    new_xyz.max(axis=0) + np.r_[0, 0, .02], xres=.01, yres=.01, zres=.04))
@@ -660,15 +665,16 @@ def get_warped_trajectory(seg_info, new_xyz, demofile, warp_root=True, plot=Fals
     return (cmat, warped_ee_traj, miniseg_starts, miniseg_ends, {'r':rgrip_joints, 'l':lgrip_joints})
 
 
-def loop_body(task_params, demofile, choose_segment, knot, animate, curr_step=None, no_cmat=False):
+def loop_body(task_params, demofile, choose_segment, animate, curr_step=None):
     """
     Do the body of the main task execution loop (ie. do a segment).
     Arguments:
+        task_params -- TaskParameters class
+        demofile
         curr_step is 0 indexed
         choose_segment is a function that returns the key in the demofile to the segment
-        knot is the knot the rope is checked against
         new_xyz is the new pointcloud
-        task_params is used for the only_original_segments argument
+
 
     seg_info is of the form:
     {'parent': The name of the segment from the action file that was chosen,
@@ -693,7 +699,7 @@ def loop_body(task_params, demofile, choose_segment, knot, animate, curr_step=No
     cmat, warped_ee_traj, miniseg_starts, miniseg_ends, joint_traj = get_warped_trajectory(seg_info, new_xyz, demofile, 
                                                                                            warp_root=task_params.warp_root,
                                                                                            plot=task_params.animate,
-                                                                                           no_cmat=no_cmat)
+                                                                                           no_cmat=task_params.no_cmat)
     success = True
     redprint("executing segment trajectory...")
 
@@ -764,6 +770,9 @@ def parse_arguments():
     parser.add_argument("--random_seed", type=int, default=None,
                         help="The random seed for the rope perturber. Using the same random seed (and keeping all of the other arguments the same too) allows initial perturbed rope states to be duplicated.")
 
+    parser.add_argument("--n_runs", type=int, default=1,
+                        help="number of experimental runs to do")
+
     parser.add_argument("--log", type=str, default=None, help="Filename for the log file.")
     args = parser.parse_args()
     print "args =", args
@@ -776,11 +785,15 @@ def main():
     if args.random_seed is not None:
         Globals.random_seed = args.random_seed
     choose_segment = find_closest_manual if args.select_manual else auto_choose
-    params = TaskParameters(args.h5file, args.sim_desired_knot_name, animate=args.animation,
-                            max_steps_before_failure=args.max_steps_before_failure, choose_segment=choose_segment,
-                            log_name=args.log)
-    result = do_single_task(params)
-    print "Main results are", result
+    bootstrap_name = osp.splitext(args.h5file)[0] + '_boot.h5'
+    boot_f = setup_bootstrap_file(args.h5file, bootstrap_name)        
+    for i in range(args.n_runs):
+        dfile = h5py.File(args.h5file, 'r')
+        cloud_xyz = sample_rope_state(dfile, min_rad = 0.05)
+        dfile.close()
+        params = TaskParameters(bootstrap_name, cloud_xyz, animate=args.animation)
+        result = do_single_task(params)
+        print "Main results are", result
 
 
 if __name__ == "__main__":

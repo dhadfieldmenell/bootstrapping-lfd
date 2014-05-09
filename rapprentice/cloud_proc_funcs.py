@@ -45,7 +45,6 @@ def extract_red(rgb, depth, T_w_k):
     
 
     good_xyz = xyz_w[good_mask]
-    
 
     return clouds.downsample(good_xyz, .01)
     
