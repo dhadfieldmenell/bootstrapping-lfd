@@ -256,7 +256,7 @@ def tps_rpm_bootstrap(x_nd, y_md, z_kd, xy_corr, n_init_iter = 10, n_iter = 20, 
     print 'cost:\t', f._cost + g._cost
     return (f, g, corr_nk)
 
-
+# @profile
 def tps_rpm_bij(x_nd, y_md, n_iter = 20, reg_init = .1, reg_final = .001, rad_init = .1, rad_final = .005, rot_reg = 1e-3, 
             plotting = False, plot_cb = None, old_xyz=None, new_xyz=None, f_init = None, g_init = None, return_corr = False):
     """

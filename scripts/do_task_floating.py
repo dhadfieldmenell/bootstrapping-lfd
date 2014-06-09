@@ -77,13 +77,14 @@ class RopeState:
 
 class TaskParameters:
     def __init__(self, action_file, cloud_xyz, animate=False, warp_root=False, 
-                 max_steps_before_failure=5,no_cmat=False):
+                 max_steps_before_failure=5,no_cmat=False, smin_alpha = 1, smin_k = 1):
         self.action_file = action_file
         self.cloud_xyz = cloud_xyz
         self.animate = animate
         self.warp_root = warp_root
         self.max_steps_before_failure = max_steps_before_failure
         self.no_cmat=no_cmat
+        self.softmin_params = {'softmin_alpha': smin_alpha, 'softmin_k': smin_k, 'nparallel': -1}
 
 
 #init_rope_state_segment, perturb_radius, perturb_num_points
@@ -294,7 +295,7 @@ def find_closest_manual(demofile, _new_xyz):
     chosen_seg = seg_names[choice_ind]
     return chosen_seg
 
-
+# @profile
 def registration_cost(xyz0, xyz1):
     scaled_xyz0, _ = registration.unit_boxify(xyz0)
     scaled_xyz1, _ = registration.unit_boxify(xyz1)
@@ -310,8 +311,8 @@ def registration_cost(xyz0, xyz1):
     cost = registration.tps_reg_cost(f) + registration.tps_reg_cost(g)   
     return cost
 
-
-def auto_choose(actionfile, new_xyz, softmin = 1, nparallel=-1):
+# @profile
+def auto_choose(actionfile, new_xyz, softmin_k = 1, softmin_alpha = 1, nparallel=-1):
     """
     @param demofile  : h5py.File object
     @param new_xyz   : new rope point-cloud
@@ -331,7 +332,7 @@ def auto_choose(actionfile, new_xyz, softmin = 1, nparallel=-1):
     if nparallel != -1:
         before = time.time()
         redprint("auto choose parallel with njobs = %d"%nparallel)
-        costs  = Parallel(n_jobs=nparallel, verbose=0)(delayed(registration_cost)(ddata[1]['cloud_xyz'][:], new_xyz) for ddata in demo_data)
+        costs  = Parallel(n_jobs=nparallel, verbose=100)(delayed(registration_cost)(ddata[1]['cloud_xyz'][:], new_xyz) for ddata in demo_data)
         after  = time.time()
         print "Parallel registration time in seconds =", after - before
     else:
@@ -340,10 +341,29 @@ def auto_choose(actionfile, new_xyz, softmin = 1, nparallel=-1):
         for i, ddata in enumerate(demo_data):
             costs.append(registration_cost(ddata[1]['cloud_xyz'][:], new_xyz))
             print(("tps-cost completed %i/%i" % (i + 1, len(demo_data))))
+    
+    # use a random draw from the softmin distribution
+    demo_costs = zip(costs, demo_data)
+    if softmin_k == 1:
+        ibest = np.argmin(costs)
+        return demo_data[ibest][0]
+    best_k_demos = np.asarray(sorted(demo_costs)[:softmin_k])
+    best_k_exps = np.exp(-1*softmin_alpha*float(best_k_demos[:, 0]))  #multiply by -1 b/c we're actually min-ing
+    if len(best_k_exps) > 1:
+        denom = sum(best_k_exps)
+    else:
+        denom = best_k_exps
+    mass_fn = best_k_exps/denom
 
-    ibest = np.argmin(costs)
+    draw = random.random()
+    for i in range(best_k_demos):
+        if draw <= mass_fn[i]:
+            ret_val = demo_data[i][0]
+            break
+        draw -= mass_fn[i]
+    
     redprint ("auto choose returning..")
-    return demo_data[ibest][0]
+    return ret_val
 
 
 
@@ -472,7 +492,7 @@ def do_single_task(task_params):
         print "i =", i
         if max_steps_before_failure != -1 and i >= max_steps_before_failure:
             break
-        loop_result = loop_body(task_params, demofile, choose_segment, animate, curr_step=i, no_cmat=no_cmat)
+        loop_result = loop_body(task_params, demofile, choose_segment, animate, curr_step=i)
         if loop_result is not None:
             knot_result = loop_result['found_knot']
             loop_results.append(loop_result)
@@ -687,9 +707,9 @@ def loop_body(task_params, demofile, choose_segment, animate, curr_step=None):
     redprint("Acquire point cloud")
     move_sim_arms_to_side()
 
-    new_xyz = Globals.sim.observe_cloud(upsample=110)
+    new_xyz = Globals.sim.observe_cloud()
 
-    segment = choose_segment(demofile, new_xyz, 7)
+    segment = choose_segment(demofile, new_xyz, **task_params.softmin_params)
     if segment is None:
         print "Got no segment while choosing a segment for warping."
         sys.exit(-1)
@@ -781,6 +801,7 @@ def parse_arguments():
 
 
 def main():
+
     args = parse_arguments()
     if args.random_seed is not None:
         Globals.random_seed = args.random_seed

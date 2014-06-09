@@ -15,7 +15,8 @@ def setup_bootstrap_file(action_fname, bootstrap_fname):
     bootfile = h5py.File(bootstrap_fname, 'w')
     for seg_name, seg_info in actfile.iteritems():
         seg_name = str(seg_name)
-        cloud_xyz = clouds.downsample(seg_info['cloud_xyz'][:], DS_SIZE)
+        # cloud_xyz = clouds.downsample(seg_info['cloud_xyz'][:], DS_SIZE)
+        cloud_xyz = seg_info['cloud_xyz'][:]
         hmats = dict((lr, seg_info['{}_gripper_tool_frame'.format(lr)]['hmat'][:]) for lr in 'lr')
         cmat = np.eye(cloud_xyz.shape[0])
         gripper_joints = dict(('{}_gripper_joint'.format(lr), seg_info['{}_gripper_joint'.format(lr)][:]) for lr in 'lr')

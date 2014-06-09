@@ -120,6 +120,7 @@ def tps_nr_err(x_ma, lin_ag, trans_g, w_ng, x_na):
         err_mab[m] = np.dot(grad_mga[m].T, grad_mga[m]) - np.eye(D)
     return err_mab.flatten()
 
+# @profile
 def tps_cost(lin_ag, trans_g, w_ng, x_na, y_ng, bend_coef, K_nn=None, return_tuple=False, wt_n = None):
     """
     XXX doesn't include rotation cost
@@ -129,7 +130,7 @@ def tps_cost(lin_ag, trans_g, w_ng, x_na, y_ng, bend_coef, K_nn=None, return_tup
     if wt_n is None: wt_n = np.ones(len(x_na))
     ypred_ng = np.dot(K_nn, w_ng) + np.dot(x_na, lin_ag) + trans_g[None,:]
     res_cost = (wt_n[:,None] * (ypred_ng - y_ng)**2).sum()
-    bend_cost = bend_coef * sum(np.dot(w_ng[:,g], np.dot(K_nn, w_ng[:,g])) for g in xrange(D))
+    bend_cost = bend_coef * np.sum(np.dot(w_ng[:,g], np.dot(K_nn, w_ng[:,g])) for g in xrange(D))
     if return_tuple:
         return res_cost, bend_cost, res_cost + bend_cost
     else:
@@ -202,7 +203,7 @@ def tps_fit(x_na, y_ng, bend_coef, rot_coef, wt_n=None, K_nn = None):
     
 
 
-    
+# @profile    
 def solve_eqp1(H, f, A):
     """solve equality-constrained qp
     min tr(x'Hx) + sum(f'x)
@@ -219,13 +220,21 @@ def solve_eqp1(H, f, A):
     # columns of N span the null space
     
     # x = Nz
-    # then problem becomes unconstrained minimization .5*z'NHNz + z'Nf
+    # then problem becomes unconstrained minimization 0.5*z'NHNz + z'Nf
     # NHNz + Nf = 0
-    z = np.linalg.solve(N.T.dot(H.dot(N)), -N.T.dot(f))
+    # import h5py
+    # d = h5py.File('../data/eq_test.h5', 'a')
+    # k = str(len(d.keys()))
+    # g = d.create_group(k)
+    # g['lhs'] = N.T.dot(H.dot(N))
+    # g['rhs'] = -1*N.T.dot(f)
+    # d.close()
+    z = np.linalg.solve(N.T.dot(H.dot(N)), -N.T.dot(f))        
+
     x = N.dot(z)
     
     return x
-    
+# @profile    
 def tps_fit3(x_na, y_ng, bend_coef, rot_coef, wt_n):
     if wt_n is None: wt_n = np.ones(len(x_na))
     n,d = x_na.shape
